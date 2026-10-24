@@ -1,0 +1,64 @@
+# Deploy in Coolify as a "Docker Compose" resource built from a Git repo containing this directory
+# (Dockerfile + scripts/). One stack per Docker host. Set the variables in Coolify's env UI.
+name: sbom-agent
+
+services:
+  # Only component that touches /var/run/docker.sock. Filters the Docker API to
+  # read-only container/image endpoints, so a compromised scanner cannot create
+  # containers, exec, or mount the host filesystem.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    restart: unless-stopped
+    environment:
+      CONTAINERS: "1"   # GET /containers/*  (ls, inspect)
+      IMAGES: "1"       # GET /images/*      (inspect, save for syft)
+      POST: "0"         # block every non-GET/HEAD request
+      # Add INFO: "1" only if Syft/Docker complains about /info.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # :ro does NOT restrict API calls; the proxy does
+    networks: [proxy]
+    labels:
+      sbom.scan: "false"
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64M }
+
+  agent:
+    build:
+      context: .
+    image: ${AGENT_IMAGE:-local/sbom-agent:1}
+    restart: unless-stopped
+    depends_on: [docker-proxy]
+    environment:
+      DOCKER_HOST: tcp://docker-proxy:2375
+      DTRACK_URL: ${DTRACK_URL:?set the Dependency-Track API base URL}
+      DTRACK_API_KEY: ${DTRACK_API_KEY:?set a scoped DT API key}
+      HOST_ID: ${HOST_ID:?set a unique name for this Docker host}
+      RECONCILE_INTERVAL: ${RECONCILE_INTERVAL:-60}
+      SCAN_TIMEOUT: ${SCAN_TIMEOUT:-900}
+      DEFAULT_TAGS: ${DEFAULT_TAGS:-}
+      GOMEMLIMIT: 1200MiB          # keep Go's GC under the container limit
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    tmpfs:
+      - /run:size=1m,mode=0700,uid=10001,gid=10001
+      - /tmp:size=32m,mode=1777
+    volumes:
+      - sbom-state:/state
+    networks: [proxy, default]
+    labels:
+      sbom.scan: "false"
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1536M }
+
+volumes:
+  sbom-state:
+
+networks:
+  proxy:
+    internal: true   # agent <-> proxy only, no internet
