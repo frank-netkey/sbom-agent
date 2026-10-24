@@ -43,7 +43,6 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    pids_limit: 256
     tmpfs:
       - /run:size=1m,mode=0700,uid=10001,gid=10001
       - /tmp:size=32m,mode=1777
@@ -54,7 +53,7 @@ services:
       sbom.scan: "false"
     deploy:
       resources:
-        limits: { cpus: "1.0", memory: 1536M }
+        limits: { cpus: "1.0", memory: 1536M, pids: 256 }
 
 volumes:
   sbom-state:
