@@ -50,19 +50,29 @@ component most worth isolating. That is why the socket goes only to `docker-prox
 Remaining exposure: the proxy still runs as root with the socket, and read access to container inspect data exposes env vars
 (secrets) of every container to the agent. Treat the agent's compromise as "can read all container env + image contents".
 
-## Not verified
+## Verification status
 
-Written and logic-tested locally (discovery, identity, CPE filter, markers, backoff, failure paths, with stubbed
-`docker`/`syft`/`curl`). **Not** tested: the image build, real Syft output, the proxy ACL with Syft's image export,
-and real DT 5.2 responses. First-run checklist:
+**Tested** (Docker 29.8.2, image built, fake Dependency-Track endpoint, Docker socket mounted directly, run as root):
+- Image builds; contains Syft 1.14.0, Docker CLI 27.3.1, jq 1.7.1.
+- Discovers a running container, scans its exact image ID with real Syft, uploads the ~228 KB SBOM to `/api/v1/bom`
+  with `X-Api-Key`, names the project from the `sbom.name` label.
+- No component in the uploaded SBOM has both `purl` and `cpe`.
+- A second pass uploads nothing (markers work).
+
+**Not tested yet:**
+- The socket proxy's read-only filter with Syft's image export (most likely to need a tweak, e.g. `INFO=1`).
+- The hardened runtime (non-root, read-only rootfs, dropped capabilities).
+- A real Dependency-Track 5.2 instance (including the exact API-key permissions needed).
+
+First-run checklist after deploying:
 
 ```bash
 docker logs -f <agent>                                # look for "uploaded <host>/<name> @ <version>"
 docker exec <agent> /opt/sbom/reconcile.sh --list     # identities
 ```
 
-If Syft fails through the proxy, the log shows which endpoint was denied (403); enable the matching proxy flag
-(`INFO=1` is the usual one). Syft/Docker CLI/Alpine versions in the Dockerfile are my picks; bump to current and pin digests.
+If Syft fails through the proxy, the log shows which endpoint was denied (403); enable the matching proxy flag.
+Syft/Docker CLI/Alpine versions in the Dockerfile are build args; bump to current and pin digests for releases.
 
 ## Optional: event trigger
 
