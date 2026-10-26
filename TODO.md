@@ -1,5 +1,7 @@
 # TODO
 
+Detailed plan for the health check and the Coolify template: see [PLAN.md](PLAN.md).
+
 ## Open
 
 - [ ] **Coolify one-click service template.** Coolify service templates are compose files with metadata header comments
