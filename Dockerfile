@@ -30,6 +30,6 @@ WORKDIR /state
 VOLUME /state
 
 HEALTHCHECK --interval=60s --timeout=5s --start-period=120s --retries=3 \
-  CMD find /state/heartbeat -mmin -20 2>/dev/null | grep -q . || exit 1
+  CMD ["/opt/sbom/healthcheck.sh"]
 
 ENTRYPOINT ["/sbin/tini", "--", "/opt/sbom/entrypoint.sh"]

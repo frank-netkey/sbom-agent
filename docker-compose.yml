@@ -16,6 +16,12 @@ services:
       # Add INFO: "1" only if Syft/Docker complains about /info.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro   # :ro does NOT restrict API calls; the proxy does
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "2375"]   # nc ships in the image (checked); no wget needed
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks: [proxy]
     labels:
       sbom.scan: "false"
@@ -29,7 +35,15 @@ services:
       context: .
     image: ${AGENT_IMAGE:-local/sbom-agent:1}
     restart: unless-stopped
-    depends_on: [docker-proxy]
+    depends_on:
+      docker-proxy:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/opt/sbom/healthcheck.sh"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
     environment:
       DOCKER_HOST: tcp://docker-proxy:2375
       DTRACK_URL: ${DTRACK_URL:?set the Dependency-Track API base URL}

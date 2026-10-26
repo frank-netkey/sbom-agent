@@ -134,19 +134,34 @@ gc_sboms() { # remove SBOMs no marker references anymore
     done
 }
 
+write_status() { # dt_reachable targets ok failed backoff
+  local prev=0 streak=0
+  [[ -f $STATE/status.json ]] && prev="$(jq -r '.consecutive_failed_passes // 0' "$STATE/status.json" 2>/dev/null)" || prev=0
+  # A pass fails when DT is unreachable or no target is in a good state; one bad image does not count.
+  if [[ $1 == false ]] || (( $2 > 0 && $3 == 0 )); then streak=$((prev + 1)); fi
+  jq -n --arg ts "$(date -u +%FT%TZ)" --argjson dt "$1" --argjson t "$2" --argjson ok "$3" \
+        --argjson f "$4" --argjson b "$5" --argjson c "$streak" \
+        '{finished_at:$ts, dt_reachable:$dt, targets:$t, ok:$ok, failed:$f, backoff:$b, consecutive_failed_passes:$c}' \
+        > "$STATE/status.json.tmp" && mv "$STATE/status.json.tmp" "$STATE/status.json"
+}
+
 main() {
   if ! dt_up; then
     log WARN "Dependency-Track not reachable at $DTRACK_URL; skipping pass"
+    write_status false 0 0 0 0
     return 0
   fi
   discover > "$WORK/targets.jsonl"
   local total=0 ok=0 failed=0 blocked=0 rc
   while IFS= read -r t; do
     total=$((total + 1))
+    touch "$STATE/heartbeat"   # progress signal: a long pass must not look hung
     rc=0; process_target "$t" || rc=$?
+    touch "$STATE/heartbeat"
     case $rc in 0) ok=$((ok + 1));; 2) blocked=$((blocked + 1));; *) failed=$((failed + 1));; esac
   done < "$WORK/targets.jsonl"
   gc_sboms
+  write_status true "$total" "$ok" "$failed" "$blocked"
   log INFO "pass done: targets=$total ok=$ok failed=$failed backoff=$blocked"
 }
 

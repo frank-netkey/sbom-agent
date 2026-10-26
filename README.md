@@ -40,6 +40,25 @@ Per-Docker-host scanner container: every `RECONCILE_INTERVAL` seconds it lists r
    existing project (I could not verify the exact 5.2 requirement). Do not use an admin key.
 4. Deploy one stack per Docker host with a distinct `HOST_ID`.
 
+## Health
+
+Both services have a compose `healthcheck`, so Coolify and `docker ps` show `(healthy)`. The agent starts only after the proxy is healthy.
+
+The agent is **healthy** when it is alive and making progress. It is **unhealthy** when:
+
+- `/state/heartbeat` is older than `HEALTH_MAX_AGE` (default `3 x RECONCILE_INTERVAL + SCAN_TIMEOUT`). The heartbeat is touched
+  around every target, so a long pass stays healthy; or
+- `consecutive_failed_passes` in `/state/status.json` reaches `HEALTH_FAIL_PASSES` (default 10, about 10 minutes). A pass counts as
+  failed when Dependency-Track is unreachable or no target is in a good state. One broken image (in backoff) does not.
+
+```bash
+docker inspect --format '{{json .State.Health}}' <agent-container>
+docker exec <agent-container> cat /state/status.json
+```
+
+`status.json` fields: `finished_at`, `dt_reachable`, `targets`, `ok`, `failed`, `backoff`, `consecutive_failed_passes`.
+Tests: `bash tests/healthcheck.sh`.
+
 ## About the Docker socket
 
 Anything that can talk to `/var/run/docker.sock` is effectively root on the host: it can start a privileged container with `/`
