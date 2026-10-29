@@ -40,6 +40,15 @@ The SHA-256 of the stored SBOM is kept next to it (`/state/sboms/<id>.cdx.json.s
 A cached SBOM whose hash no longer matches is discarded and rescanned instead of uploaded. Dependency-Track may not display
 `metadata.properties`; the data is in the SBOM and in `/state`. Hashes of individual components/files are not added (large SBOMs, slower scans).
 
+Further enrichment (`annotate-sbom.jq`), following the "essential elements" in the NCSC/TNO SBOM starter guide:
+- `metadata.authors` (`SBOM_AUTHOR`, default `sbom-agent (<HOST_ID>)`) and `metadata.lifecycles` (`operations`, CycloneDX >= 1.5 only).
+- A root entry in `dependencies` for the image component (components nobody depends on become its direct dependencies), so the
+  dependency graph has a root.
+
+Quality summary (`quality-sbom.jq`): per SBOM the agent logs and stores in the marker the share of components with a PURL, a version
+and a hash, plus components with no identifier at all. A warning is logged when the PURL share is below `QUALITY_MIN_PURL_PCT` (default 80).
+It is informational only; the SBOM is still uploaded.
+
 ## Deploy (Coolify)
 
 1. Put this directory in a Git repo; create a **Docker Compose** resource on the target server (build from the repo), or

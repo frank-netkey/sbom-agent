@@ -52,6 +52,8 @@ services:
       RECONCILE_INTERVAL: ${RECONCILE_INTERVAL:-60}
       SCAN_TIMEOUT: ${SCAN_TIMEOUT:-900}
       DEFAULT_TAGS: ${DEFAULT_TAGS:-}
+      SBOM_AUTHOR: ${SBOM_AUTHOR:-}
+      QUALITY_MIN_PURL_PCT: ${QUALITY_MIN_PURL_PCT:-80}
       GOMEMLIMIT: 1200MiB          # keep Go's GC under the container limit
     user: "10001:10001"
     read_only: true

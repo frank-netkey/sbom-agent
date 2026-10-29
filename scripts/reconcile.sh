@@ -60,10 +60,11 @@ scan_image() { # image_id identity image_ref out
   jq -f "$HERE/filter-sbom.jq" "$raw" > "$filtered" || return 1
   jq -e '.bomFormat == "CycloneDX"' "$filtered" >/dev/null || { echo "not a CycloneDX document"; return 1; }
   jq --arg image_id "$image_id" --arg image_ref "$image_ref" --arg host "$HOST_ID" \
-     --arg ts "$(date -u +%FT%TZ)" --arg repo_digest "$repo_digest" \
+     --arg ts "$(date -u +%FT%TZ)" --arg repo_digest "$repo_digest" --arg author "$SBOM_AUTHOR" \
      -f "$HERE/annotate-sbom.jq" "$filtered" > "$annotated" || return 1
   local n; n="$(jq '.components // [] | length' "$annotated")" || return 1
   (( n > 0 )) || log WARN "$identity: SBOM has 0 components" >&2
+  jq -c -f "$HERE/quality-sbom.jq" "$annotated" > "$out.quality.json" || return 1
   # The sidecar hash lets us detect a changed/corrupted SBOM before re-uploading it.
   sha256sum < "$annotated" | cut -d' ' -f1 > "$out.sha256" || return 1
   mv "$annotated" "$out"
@@ -114,7 +115,7 @@ process_target() { # target-json
   # A cached SBOM is only reused if it still matches the hash recorded when it was written.
   if [[ -s $sbom ]] && [[ "$(sha256sum < "$sbom" | cut -d' ' -f1)" != "$(cat "$sbom.sha256" 2>/dev/null)" ]]; then
     log WARN "$identity: cached SBOM missing/mismatched hash, rescanning"
-    rm -f "$sbom" "$sbom.sha256"
+    rm -f "$sbom" "$sbom.sha256" "$sbom.quality.json"
   fi
   if [[ ! -s $sbom ]]; then
     log INFO "scanning $identity ($image_id)"
@@ -122,6 +123,14 @@ process_target() { # target-json
       record_failure "$key" "$identity" "scan failed: $(tail -n 3 "$WORK/err.txt" | tr '\n' ' ')"
       return 1
     }
+  fi
+
+  local quality="null"
+  if [[ -s $sbom.quality.json ]]; then
+    quality="$(cat "$sbom.quality.json")"
+    log INFO "$identity: quality $(jq -r '"components=\(.components) purl=\(.purl_pct)% version=\(.version_pct)% hash=\(.hash_pct)% no_identifier=\(.no_identifier)"' <<<"$quality")"
+    jq -e --argjson min "$QUALITY_MIN_PURL_PCT" '.purl_pct >= $min' <<<"$quality" >/dev/null \
+      || log WARN "$identity: only $(jq -r '.purl_pct' <<<"$quality")% of components have a PURL (min ${QUALITY_MIN_PURL_PCT}%)"
   fi
 
   local err
@@ -132,7 +141,8 @@ process_target() { # target-json
 
   jq -n --arg p "$project" --arg v "$version" --arg id "$image_id" --arg fp "$fp" \
         --arg u "$uuid" --arg ts "$(date -u +%FT%TZ)" --arg sha "$(cat "$sbom.sha256")" \
-        '{project:$p, version:$v, image_id:$id, fingerprint:$fp, project_uuid:$u, uploaded_at:$ts, sbom_sha256:$sha}' \
+        --argjson q "$quality" \
+        '{project:$p, version:$v, image_id:$id, fingerprint:$fp, project_uuid:$u, uploaded_at:$ts, sbom_sha256:$sha, quality:$q}' \
         > "$marker.tmp" && mv "$marker.tmp" "$marker" || return 1
   rm -f "$STATE/failures/$key"
   log INFO "uploaded $project @ $version"
@@ -143,7 +153,7 @@ gc_sboms() { # remove SBOMs no marker references anymore
   { shopt -s nullglob; for m in "$STATE"/markers/*.json; do jq -r '.image_id | ltrimstr("sha256:")' "$m"; done; } > "$keep"
   find "$STATE/sboms" -name '*.cdx.json' -mtime "+$((SBOM_KEEP_DAYS - 1))" -print0 |
     while IFS= read -r -d '' f; do
-      grep -qxF "$(basename "$f" .cdx.json)" "$keep" || { rm -f "$f" "$f.sha256"; log INFO "gc: removed $(basename "$f")"; }
+      grep -qxF "$(basename "$f" .cdx.json)" "$keep" || { rm -f "$f" "$f.sha256" "$f.quality.json"; log INFO "gc: removed $(basename "$f")"; }
     done
 }
 
