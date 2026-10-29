@@ -47,18 +47,26 @@ record_failure() { # key identity reason
   log WARN "$2: $3 (failure #$count, retry in ${delay}s)"
 }
 
-scan_image() { # image_id identity out
+scan_image() { # image_id identity image_ref out
   # Called inside `||`, where errexit is off: every step must return explicitly.
-  local image_id="$1" identity="$2" out="$3"
-  local raw="$WORK/raw.json" filtered="$WORK/filtered.json"
+  local image_id="$1" identity="$2" image_ref="$3" out="$4"
+  local raw="$WORK/raw.json" filtered="$WORK/filtered.json" annotated="$WORK/annotated.json"
+  local repo_digest=""
+  # Locally built images have no RepoDigests; that is fine.
+  repo_digest="$(docker image inspect --format '{{json .RepoDigests}}' "$image_id" 2>/dev/null | jq -r '.[0] // ""' 2>/dev/null)" || repo_digest=""
   timeout "$SCAN_TIMEOUT" syft scan "docker:$image_id" \
       --source-name "$identity" --source-version "$image_id" \
       -o "cyclonedx-json=$raw" -q || return 1
   jq -f "$HERE/filter-sbom.jq" "$raw" > "$filtered" || return 1
   jq -e '.bomFormat == "CycloneDX"' "$filtered" >/dev/null || { echo "not a CycloneDX document"; return 1; }
-  local n; n="$(jq '.components // [] | length' "$filtered")" || return 1
+  jq --arg image_id "$image_id" --arg image_ref "$image_ref" --arg host "$HOST_ID" \
+     --arg ts "$(date -u +%FT%TZ)" --arg repo_digest "$repo_digest" \
+     -f "$HERE/annotate-sbom.jq" "$filtered" > "$annotated" || return 1
+  local n; n="$(jq '.components // [] | length' "$annotated")" || return 1
   (( n > 0 )) || log WARN "$identity: SBOM has 0 components" >&2
-  mv "$filtered" "$out"
+  # The sidecar hash lets us detect a changed/corrupted SBOM before re-uploading it.
+  sha256sum < "$annotated" | cut -d' ' -f1 > "$out.sha256" || return 1
+  mv "$annotated" "$out"
 }
 
 upload_sbom() { # sbom project version project_uuid tags
@@ -82,9 +90,9 @@ upload_sbom() { # sbom project version project_uuid tags
 }
 
 process_target() { # target-json
-  local t="$1" identity image_id uuid tags_label
-  IFS=$'\x1f' read -r identity image_id uuid tags_label \
-    < <(jq -r '[.identity, .image_id, .project_uuid, .tags] | join("\u001f")' <<<"$t")
+  local t="$1" identity image_id uuid tags_label image_ref
+  IFS=$'\x1f' read -r identity image_id uuid tags_label image_ref \
+    < <(jq -r '[.identity, .image_id, .project_uuid, .tags, .image_ref] | join("\u001f")' <<<"$t")
 
   local project="${HOST_ID}/${identity}"
   local version="${image_id#sha256:}"; version="${version:0:12}"
@@ -103,9 +111,14 @@ process_target() { # target-json
     return 2
   fi
 
+  # A cached SBOM is only reused if it still matches the hash recorded when it was written.
+  if [[ -s $sbom ]] && [[ "$(sha256sum < "$sbom" | cut -d' ' -f1)" != "$(cat "$sbom.sha256" 2>/dev/null)" ]]; then
+    log WARN "$identity: cached SBOM missing/mismatched hash, rescanning"
+    rm -f "$sbom" "$sbom.sha256"
+  fi
   if [[ ! -s $sbom ]]; then
     log INFO "scanning $identity ($image_id)"
-    scan_image "$image_id" "$project" "$sbom" 2> "$WORK/err.txt" || {
+    scan_image "$image_id" "$project" "$image_ref" "$sbom" 2> "$WORK/err.txt" || {
       record_failure "$key" "$identity" "scan failed: $(tail -n 3 "$WORK/err.txt" | tr '\n' ' ')"
       return 1
     }
@@ -118,8 +131,8 @@ process_target() { # target-json
   fi
 
   jq -n --arg p "$project" --arg v "$version" --arg id "$image_id" --arg fp "$fp" \
-        --arg u "$uuid" --arg ts "$(date -u +%FT%TZ)" \
-        '{project:$p, version:$v, image_id:$id, fingerprint:$fp, project_uuid:$u, uploaded_at:$ts}' \
+        --arg u "$uuid" --arg ts "$(date -u +%FT%TZ)" --arg sha "$(cat "$sbom.sha256")" \
+        '{project:$p, version:$v, image_id:$id, fingerprint:$fp, project_uuid:$u, uploaded_at:$ts, sbom_sha256:$sha}' \
         > "$marker.tmp" && mv "$marker.tmp" "$marker" || return 1
   rm -f "$STATE/failures/$key"
   log INFO "uploaded $project @ $version"
@@ -130,7 +143,7 @@ gc_sboms() { # remove SBOMs no marker references anymore
   { shopt -s nullglob; for m in "$STATE"/markers/*.json; do jq -r '.image_id | ltrimstr("sha256:")' "$m"; done; } > "$keep"
   find "$STATE/sboms" -name '*.cdx.json' -mtime "+$((SBOM_KEEP_DAYS - 1))" -print0 |
     while IFS= read -r -d '' f; do
-      grep -qxF "$(basename "$f" .cdx.json)" "$keep" || { rm -f "$f"; log INFO "gc: removed $(basename "$f")"; }
+      grep -qxF "$(basename "$f" .cdx.json)" "$keep" || { rm -f "$f" "$f.sha256"; log INFO "gc: removed $(basename "$f")"; }
     done
 }
 

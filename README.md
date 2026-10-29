@@ -30,6 +30,16 @@ Per-Docker-host scanner container: every `RECONCILE_INTERVAL` seconds it lists r
   DT being down skips the pass.
 - The API key is written to a tmpfs header file, so it never shows up in `ps`.
 
+## Provenance and hashes
+
+Each SBOM is annotated before upload (`scripts/annotate-sbom.jq`):
+- `metadata.properties`: `sbom-agent:image-id`, `image-ref`, `host`, `generated-at`.
+- `metadata.component.hashes`: the image's repo (manifest) digest as SHA-256, when the image has one (locally built images don't).
+
+The SHA-256 of the stored SBOM is kept next to it (`/state/sboms/<id>.cdx.json.sha256`) and in the upload marker (`sbom_sha256`).
+A cached SBOM whose hash no longer matches is discarded and rescanned instead of uploaded. Dependency-Track may not display
+`metadata.properties`; the data is in the SBOM and in `/state`. Hashes of individual components/files are not added (large SBOMs, slower scans).
+
 ## Deploy (Coolify)
 
 1. Put this directory in a Git repo; create a **Docker Compose** resource on the target server (build from the repo), or
