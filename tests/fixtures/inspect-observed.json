@@ -1,0 +1,14 @@
+[
+ {"Id":"c1","Name":"/2qbahiotobqphmtpe0wga4kp-112144123456","Image":"sha256:aaaaaaaaaaaa1111","Config":{"Image":"app:1","Labels":{
+   "coolify.resourceName":"docker-image-2qbahiotobqphmtpe0wga4kp",
+   "com.docker.compose.service":"2qbahiotobqphmtpe0wga4kp-20261024T112144"}}},
+ {"Id":"c2","Name":"/mysql-1","Image":"sha256:bbbbbbbbbbbb2222","Config":{"Image":"mysql:8","Labels":{
+   "coolify.resourceName":"leantime-yjzr4v2btmwirvyk6d44fsdn","com.docker.compose.service":"mysql"}}},
+ {"Id":"c3","Name":"/tr-1","Image":"sha256:cccccccccccc3333","Config":{"Image":"runners:1","Labels":{
+   "coolify.resourceName":"n8n-with-postgresql-ygqyirwwe2e45zs4qvx48plb","com.docker.compose.service":"task-runners"}}},
+ {"Id":"c4","Name":"/api-1","Image":"sha256:dddddddddddd4444","Config":{"Image":"api:1","Labels":{
+   "com.docker.compose.project":"service-z8yxmfx57resjzvs2goywu0c","com.docker.compose.service":"apiserver"}}},
+ {"Id":"c5","Name":"/coolify","Image":"sha256:eeeeeeeeeeee5555","Config":{"Image":"coolify:4","Labels":{
+   "com.docker.compose.project":"source","com.docker.compose.service":"coolify"}}},
+ {"Id":"c6","Name":"/mgiknioijkrcjwlhnbqszldn-123456789012","Image":"sha256:ffffffffffff6666","Config":{"Image":"plain:1","Labels":{}}}
+]

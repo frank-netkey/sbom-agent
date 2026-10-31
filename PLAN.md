@@ -67,3 +67,46 @@ containers report healthy.
 ## Order
 
 Part 1 (steps 1-7) -> image publishing (Part 2 step 2) -> template file (step 3) -> upstream PR (step 4).
+
+---
+
+# Plan 2: stable versions, project relationships, quick wins
+
+## Problem 1: a redeploy creates a new Dependency-Track project
+
+Versioning already works (version = image ID, `isLatest=true`). The new projects come from **identities that change per
+deployment**. Seen in DT: `n8n01/docker-image-<uuid>/<uuid>-20261024T112144` (Coolify "Docker Image" resource: the compose
+service label carries a `-YYYYMMDDTHHMMSS` deploy timestamp). The current strip regex only removes `-<12+ digits>`, and only from
+the container name, not from the compose service.
+
+**Fix (identities.jq):** one `normalize` function applied to every identity segment (container name *and* compose service):
+strip trailing `-<12+ digits>` and `-YYYYMMDDTHHMMSS(Z)`. Keep the Coolify resource UUID (it is stable per resource).
+`sbom.name` stays the explicit override. Old timestamped projects stay in DT; deleting them is a manual step for the user.
+
+## Problem 2: no relationship between containers of one Coolify resource
+
+Use DT parent/child projects. Group = the stack the container belongs to (`coolify.resourceName`, else compose project),
+overridable with label `sbom.parent`; containers without a group get no parent.
+
+- Parent project `<HOST_ID>/<group>` with a fixed version (`PARENT_VERSION`, default `current`).
+- Parent is created with least privilege: upload a minimal (zero-component) CycloneDX BOM with `autoCreate=true`
+  (same BOM_UPLOAD + PROJECT_CREATION_UPLOAD permissions), once per group, recorded in `/state/parents/`.
+- Children are uploaded with `parentName`/`parentVersion`. If the parent step fails, the child is uploaded without a parent
+  and a WARN is logged (never block SBOM uploads on the relationship).
+- Feature flag `DTRACK_PARENTS` (default `true`). Unverified against DT 5.2: exact parent parameter names/behaviour.
+- Optional manual step in DT UI: mark parents as collection projects (aggregate latest child versions).
+
+## Quick wins from TODO
+
+- **Publish workflow** `.github/workflows/publish.yml`: build + push `ghcr.io/frank-netkey/sbom-agent`, triggered only by
+  `v*` tags and manual dispatch (nothing is published until a tag is pushed).
+- **Pin base images by digest** in the Dockerfile (tags kept as comments); report the socket-proxy digest for the compose file.
+- **Stub test harness** `tests/run.sh` (fake docker/syft/curl/timeout) so behaviour changes are tested repeatably.
+- TODO cleanup: the `docker-image-*` projects are not ephemeral builds (Problem 1); the dependency-graph-root item is done.
+
+## Execution
+
+Two parallel workers with disjoint files:
+- **A**: `scripts/identities.jq`, `scripts/reconcile.sh`, `scripts/lib.sh`, `docker-compose.yml` (env only), `README.md`, `tests/`.
+- **B**: `.github/workflows/`, `Dockerfile`.
+Then review, run tests, update TODO, commit.

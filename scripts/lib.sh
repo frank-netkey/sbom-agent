@@ -13,6 +13,8 @@ BACKOFF_MAX="${BACKOFF_MAX:-3600}"
 SBOM_KEEP_DAYS="${SBOM_KEEP_DAYS:-1}"
 SBOM_AUTHOR="${SBOM_AUTHOR:-sbom-agent (${HOST_ID})}"
 QUALITY_MIN_PURL_PCT="${QUALITY_MIN_PURL_PCT:-80}"
+PARENT_VERSION="${PARENT_VERSION:-current}"
+case "${DTRACK_PARENTS:-true}" in false|FALSE|False|0|no|NO) DTRACK_PARENTS=false;; *) DTRACK_PARENTS=true;; esac
 HDR_FILE="${HDR_FILE:-/run/dtrack.hdr}"
 
 log() { # level message...
@@ -22,7 +24,7 @@ log() { # level message...
 
 init_state() {
   umask 077
-  mkdir -p "$STATE"/{markers,failures,sboms,tmp,cache,home}
+  mkdir -p "$STATE"/{markers,failures,parents,sboms,tmp,cache,home}
 }
 
 # Write the API key into a header file so it never appears in `ps` output.
@@ -37,3 +39,12 @@ init_auth() {
 }
 
 key_of() { printf '%s' "$1" | sha256sum | cut -c1-16; }
+
+new_uuid() { # random UUID for the parent BOM serialNumber
+  local u=""
+  if [[ -r /proc/sys/kernel/random/uuid ]]; then u="$(cat /proc/sys/kernel/random/uuid)"
+  elif command -v uuidgen >/dev/null 2>&1; then u="$(uuidgen | tr 'A-Z' 'a-z')"
+  else u="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n' | sed -E 's/^(.{8})(.{4}).(.{3}).(.{3})(.{12}).*/\1-\2-4\3-a\4-\5/')"
+  fi
+  printf '%s' "$u"
+}

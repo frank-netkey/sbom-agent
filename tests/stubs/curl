@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Stub curl. Logs one line per call to $STUB_CURL_LOG (all args, so -F fields are visible) and
+# saves each uploaded BOM as $STUB_CURL_LOG.<n>.bom. A call whose line contains $STUB_CURL_FAIL_MATCH
+# gets HTTP 500. /api/version succeeds, everything else answers 200.
+out=""; wfmt=""; bom=""; url=""
+args=("$@")
+i=0
+while (( i < ${#args[@]} )); do
+  a="${args[$i]}"
+  case "$a" in
+    -o) i=$((i + 1)); out="${args[$i]}";;
+    -w) i=$((i + 1)); wfmt="${args[$i]}";;
+    -F) i=$((i + 1)); case "${args[$i]}" in bom=@*) bom="${args[$i]#bom=@}"; bom="${bom%%;*}";; esac;;
+    -H|--connect-timeout|--max-time|--retry|--retry-delay) i=$((i + 1));;
+    http*) url="$a";;
+  esac
+  i=$((i + 1))
+done
+case "$url" in */api/version) echo '{"version":"5.2.0"}' ; exit 0;; esac
+echo "$*" >> "$STUB_CURL_LOG"
+n="$(wc -l < "$STUB_CURL_LOG" | tr -d ' ')"
+[[ -n $bom ]] && cp "$bom" "$STUB_CURL_LOG.$n.bom"
+code=200
+if [[ -n ${STUB_CURL_FAIL_MATCH:-} && "$*" == *"$STUB_CURL_FAIL_MATCH"* ]]; then code=500; fi
+[[ -n $out ]] && echo '{}' > "$out"
+[[ -n $wfmt ]] && printf '%s' "$code"
+exit 0

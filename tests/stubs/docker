@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Stub docker. STUB_INSPECT = JSON array returned by `container inspect`.
+case "$1 $2" in
+  "container ls")      jq -r '.[].Id' "$STUB_INSPECT";;
+  "container inspect") cat "$STUB_INSPECT";;
+  "image inspect")     echo '[]';;
+  *)                   exit 1;;
+esac

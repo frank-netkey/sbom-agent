@@ -1,14 +1,16 @@
 # syntax=docker/dockerfile:1
-# Pin by tag here; for reproducible builds replace each tag with @sha256:<digest>
-# (docker buildx imagetools inspect <image>:<tag>).
-ARG ALPINE_VERSION=3.20.3
-ARG SYFT_VERSION=v1.14.0
-ARG DOCKER_CLI_VERSION=27.3.1
+# Base images are pinned by multi-arch index digest (amd64 + arm64) for reproducible builds.
+# To bump: change the tag AND its digest together, e.g.
+#   docker buildx imagetools inspect alpine:<new-tag>   (use the top-level "Digest:")
+# Keep the tag in front of the digest so the version stays readable.
+ARG ALPINE_IMAGE=alpine:3.20.3@sha256:1e42bbe2508154c9126d48c2b8a75420c3544343bf86fd041fb7527e017a4b4a
+ARG SYFT_IMAGE=anchore/syft:v1.14.0@sha256:f73604d3dc671f09772684b45f35b6646022f0ace6dff42d18fe4c528c098918
+ARG DOCKER_CLI_IMAGE=docker:27.3.1-cli@sha256:328eb399a065780c2cebe9224de003aa14084cf69efae882ac27430f921819b7
 
-FROM anchore/syft:${SYFT_VERSION} AS syft
-FROM docker:${DOCKER_CLI_VERSION}-cli AS dockercli
+FROM ${SYFT_IMAGE} AS syft
+FROM ${DOCKER_CLI_IMAGE} AS dockercli
 
-FROM alpine:${ALPINE_VERSION}
+FROM ${ALPINE_IMAGE}
 
 RUN apk add --no-cache bash jq curl ca-certificates tini \
  && adduser -D -u 10001 -h /state sbom \

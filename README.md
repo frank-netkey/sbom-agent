@@ -11,18 +11,35 @@ Per-Docker-host scanner container: every `RECONCILE_INTERVAL` seconds it lists r
 | `docker-compose.yml` | `docker-proxy` (only thing with the socket) + `agent` (read-only rootfs, non-root, caps dropped, limits) |
 | `scripts/entrypoint.sh` | Loop, heartbeat, signal handling |
 | `scripts/reconcile.sh` | One pass: discover → scan → filter → upload → marker; `--list` is a dry run |
-| `scripts/identities.jq` | Container → stable service identity |
+| `scripts/identities.jq` | Container → stable service identity + parent group |
+| `tests/run.sh` | Stubbed behaviour tests (`bash tests/run.sh`); stubs in `tests/stubs/`, fixtures in `tests/fixtures/` |
 | `scripts/filter-sbom.jq` | Drop `.cpe` only where `.purl` is non-empty |
 
 ## Behaviour
 
 - **Version = first 12 hex of the image ID**, project = `<HOST_ID>/<identity>`, uploaded with `autoCreate=true&isLatest=true`.
   Redeploying the same image does nothing; a new image ID creates a new version and marks it latest.
-- **Identity** (first match): label `sbom.name` → `coolify.resourceName[/compose service]` → `compose project/service` →
-  container name minus Coolify's trailing `-<12+ digit timestamp>`. Run `docker exec <agent> /opt/sbom/reconcile.sh --list`
-  and check the names look right **before** the first real upload; set `sbom.name` on anything that doesn't.
+- **Identity** (first match): label `sbom.name` (exact) → `coolify.resourceName[/compose service]` → `compose project/service` →
+  container name. Every derived segment is normalized: a trailing `-<12+ digits>` and a trailing `-YYYYMMDDTHHMMSS[Z]` are
+  stripped (Coolify "Docker Image" resources add the latter per deploy), so a redeploy is a new *version* of the same project.
+  The 24-char Coolify resource UUIDs are kept. Run `docker exec <agent> /opt/sbom/reconcile.sh --list`
+  and check the names look right **before** the first real upload (columns: identity, image ID, image ref, container name, group);
+  set `sbom.name` on anything that doesn't.
 - **Per-container labels:** `sbom.scan=false` (skip), `sbom.dtrack.project=<uuid>` (upload to that existing project instead
-  of name/version), `sbom.tags=a,b` (extra tags).
+  of name/version; no parent), `sbom.tags=a,b` (extra tags), `sbom.parent=<group>` (parent override, see below).
+- **Parent projects** (`DTRACK_PARENTS`, default `true`): containers of one Coolify resource/stack are linked under a parent
+  project `<HOST_ID>/<group>` with fixed version `PARENT_VERSION` (default `current`). Group = label `sbom.parent` (exact), else
+  normalized `coolify.resourceName`, else normalized compose project; empty (no parent) when absent or equal to the identity
+  (single-container resources). The agent creates the parent once per group by uploading a minimal zero-component CycloneDX 1.6
+  BOM with `autoCreate=true` (same permissions as normal uploads; recorded in `/state/parents/`), then uploads children with
+  `parentName`/`parentVersion`. If the parent step fails, the child is uploaded without parent fields, a WARN is logged and no
+  failure backoff is recorded; the link is retried on later passes. The group is part of the upload fingerprint, so the first pass
+  after enabling this re-uploads each grouped service once to link existing projects.
+  **Unverified against DT 5.2** (parameter names/behaviour of `parentName`/`parentVersion` on `POST /api/v1/bom`). Disable with
+  `DTRACK_PARENTS=false` (no parent upload and no parent fields). Optional manual step in the DT UI: mark the parent projects as
+  collection projects (aggregating the latest child versions).
+- **Old projects stay:** projects created earlier under timestamped names (e.g. `n8n01/docker-image-<uuid>/<uuid>-20261024T112144`)
+  are not touched or removed; delete them manually in DT. New passes create the normalized name.
 - **State in `/state`:** `markers/` (what was uploaded: image ID + config fingerprint), `sboms/<imageid>.cdx.json`
   (reused if an upload failed, or two services share an image; garbage-collected once no marker references it and it is >1 day old),
   `failures/` (exponential backoff 1 min → 1 h per service), `heartbeat` (healthcheck).
@@ -53,7 +70,8 @@ It is informational only; the SBOM is still uploaded.
 
 1. Put this directory in a Git repo; create a **Docker Compose** resource on the target server (build from the repo), or
    build/push the image yourself and replace `build:` with `image:`.
-2. Set `DTRACK_API_KEY` (required), and optionally `DTRACK_URL`, `HOST_ID`, `DEFAULT_TAGS`, `RECONCILE_INTERVAL`.
+2. Set `DTRACK_API_KEY`, `DTRACK_URL` and `HOST_ID` (required), and optionally `DEFAULT_TAGS`, `RECONCILE_INTERVAL`,
+   `DTRACK_PARENTS` (`true`/`false`, default `true`) and `PARENT_VERSION` (default `current`).
 3. In Dependency-Track create a team (e.g. `sbom-agents`) with only **BOM_UPLOAD** and **PROJECT_CREATION_UPLOAD**
    and generate its API key. Add `PORTFOLIO_MANAGEMENT` only if DT rejects the upload when setting tags/`isLatest` on an
    existing project (I could not verify the exact 5.2 requirement). Do not use an admin key.
@@ -76,7 +94,7 @@ docker exec <agent-container> cat /state/status.json
 ```
 
 `status.json` fields: `finished_at`, `dt_reachable`, `targets`, `ok`, `failed`, `backoff`, `consecutive_failed_passes`.
-Tests: `bash tests/healthcheck.sh`.
+Tests: `bash tests/healthcheck.sh` and `bash tests/run.sh` (identities, parents, upload/marker behaviour with stubbed docker/syft/curl).
 
 ## About the Docker socket
 

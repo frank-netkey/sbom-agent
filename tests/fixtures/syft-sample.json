@@ -1,0 +1,12 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "metadata": {"component": {"type": "container", "name": "img", "bom-ref": "root"}},
+  "components": [
+    {"type": "library", "name": "with-both", "version": "1.0", "bom-ref": "a",
+     "purl": "pkg:npm/with-both@1.0", "cpe": "cpe:2.3:a:x:with-both:1.0:*:*:*:*:*:*:*"},
+    {"type": "library", "name": "cpe-only", "version": "2.0", "bom-ref": "b",
+     "cpe": "cpe:2.3:a:x:cpe-only:2.0:*:*:*:*:*:*:*"}
+  ]
+}

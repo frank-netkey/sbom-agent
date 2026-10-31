@@ -21,7 +21,7 @@ discover() {
 }
 
 if [[ ${1:-} == --list ]]; then
-  discover | jq -r '[.identity, .image_id, .image_ref, .name] | @tsv'
+  discover | jq -r '[.identity, .image_id, .image_ref, .name, .group] | @tsv'
   exit 0
 fi
 
@@ -70,8 +70,8 @@ scan_image() { # image_id identity image_ref out
   mv "$annotated" "$out"
 }
 
-upload_sbom() { # sbom project version project_uuid tags
-  local sbom="$1" project="$2" version="$3" uuid="$4" tags="$5"
+upload_sbom() { # sbom project version project_uuid tags [parent_name parent_version]
+  local sbom="$1" project="$2" version="$3" uuid="$4" tags="$5" parent="${6:-}" parent_version="${7:-}"
   local resp="$WORK/resp.txt" code
   local -a args=(-F "bom=@$sbom;type=application/json")
   if [[ -n $uuid ]]; then
@@ -80,6 +80,7 @@ upload_sbom() { # sbom project version project_uuid tags
     args+=(-F "projectName=$project" -F "projectVersion=$version"
            -F "autoCreate=true" -F "isLatest=true")
     [[ -n $tags ]] && args+=(-F "projectTags=$tags")
+    [[ -n $parent ]] && args+=(-F "parentName=$parent" -F "parentVersion=$parent_version")
   fi
   code="$(curl -sS -o "$resp" -w '%{http_code}' \
       --connect-timeout 10 --max-time "$UPLOAD_TIMEOUT" \
@@ -90,16 +91,50 @@ upload_sbom() { # sbom project version project_uuid tags
   return 1
 }
 
+# Minimal valid CycloneDX 1.6 BOM (zero components) whose only job is to create the parent project.
+write_parent_bom() { # group out
+  jq -n --arg name "$1" --arg serial "urn:uuid:$(new_uuid)" --arg ts "$(date -u +%FT%TZ)" \
+    '{bomFormat:"CycloneDX", specVersion:"1.6", serialNumber:$serial, version:1,
+      metadata:{timestamp:$ts, component:{type:"application", name:$name, "bom-ref":$name}},
+      components:[]}' > "$2"
+}
+
+ensure_parent() { # group tags -> 0 if the parent project exists (or was just created)
+  # Called inside `if`, where errexit is off: every step must return explicitly.
+  # Never records a failure backoff: the relationship must not block SBOM uploads.
+  local group="$1" tags="$2" pname="${HOST_ID}/$1"
+  local pkey; pkey="$(key_of "$pname/$PARENT_VERSION")" || return 1
+  local pstate="$STATE/parents/$pkey.json" pass_failed="$WORK/parent-failed.$pkey" err
+  [[ -f $pstate ]] && return 0
+  [[ -f $pass_failed ]] && return 1   # already tried (and warned) in this pass
+  write_parent_bom "$pname" "$WORK/parent-bom.json" || { : > "$pass_failed"; return 1; }
+  if ! err="$(upload_sbom "$WORK/parent-bom.json" "$pname" "$PARENT_VERSION" "" "$tags")"; then
+    : > "$pass_failed"
+    log WARN "$pname: parent project upload failed, children go without parent: $err"
+    return 1
+  fi
+  jq -n --arg p "$pname" --arg v "$PARENT_VERSION" --arg ts "$(date -u +%FT%TZ)" \
+        '{project:$p, version:$v, created_at:$ts}' > "$pstate.tmp" && mv "$pstate.tmp" "$pstate" || return 1
+  log INFO "created parent $pname @ $PARENT_VERSION"
+}
+
 process_target() { # target-json
-  local t="$1" identity image_id uuid tags_label image_ref
-  IFS=$'\x1f' read -r identity image_id uuid tags_label image_ref \
-    < <(jq -r '[.identity, .image_id, .project_uuid, .tags, .image_ref] | join("\u001f")' <<<"$t")
+  local t="$1" identity image_id uuid tags_label image_ref group
+  IFS=$'\x1f' read -r identity image_id uuid tags_label image_ref group \
+    < <(jq -r '[.identity, .image_id, .project_uuid, .tags, .image_ref, .group] | join("\u001f")' <<<"$t")
+  # Parent relationship only for name/version uploads of grouped targets, and only if enabled.
+  if [[ $DTRACK_PARENTS != true || -n $uuid ]]; then group=""; fi
 
   local project="${HOST_ID}/${identity}"
   local version="${image_id#sha256:}"; version="${version:0:12}"
   local tags="$DEFAULT_TAGS"; [[ -n $tags_label ]] && tags="$tags,$tags_label"
   local key; key="$(key_of "$project")"
-  local fp; fp="$(printf '%s\n' "$project" "$version" "$uuid" "$tags" | sha256sum | cut -d' ' -f1)"
+  local fp_base; fp_base="$(printf '%s\n' "$project" "$version" "$uuid" "$tags" | sha256sum | cut -d' ' -f1)"
+  local fp="$fp_base"
+  # Targets without a parent keep their old fingerprint; adding a parent causes one re-upload (links old projects).
+  if [[ -n $group ]]; then
+    fp="$(printf '%s\n' "$fp_base" "parent=${HOST_ID}/$group@$PARENT_VERSION" | sha256sum | cut -d' ' -f1)"
+  fi
   local marker="$STATE/markers/$key.json"
   local sbom="$STATE/sboms/${image_id#sha256:}.cdx.json"
 
@@ -110,6 +145,20 @@ process_target() { # target-json
   if failure_blocked "$key"; then
     log DEBUG "$identity: in backoff, skipping"
     return 2
+  fi
+  local parent="" parent_version=""
+  if [[ -n $group ]]; then
+    if ensure_parent "$group" "$tags"; then
+      parent="${HOST_ID}/$group"; parent_version="$PARENT_VERSION"
+    else
+      # Parent unavailable: upload without it; the marker then records the no-parent fingerprint,
+      # so a later pass with a working parent re-uploads once to link the project.
+      fp="$fp_base"
+      if [[ -f $marker ]] && jq -e --arg id "$image_id" --arg fp "$fp" \
+            '.image_id == $id and .fingerprint == $fp' "$marker" >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
   fi
 
   # A cached SBOM is only reused if it still matches the hash recorded when it was written.
@@ -134,9 +183,20 @@ process_target() { # target-json
   fi
 
   local err
-  if ! err="$(upload_sbom "$sbom" "$project" "$version" "$uuid" "$tags")"; then
-    record_failure "$key" "$identity" "upload failed: $err"
-    return 1
+  if ! err="$(upload_sbom "$sbom" "$project" "$version" "$uuid" "$tags" "$parent" "$parent_version")"; then
+    if [[ -n $parent ]]; then
+      # The parent may have been deleted in DT: forget it (recreated next pass) and retry once without it.
+      log WARN "$identity: upload with parent $parent failed ($err); retrying without parent"
+      rm -f "$STATE/parents/$(key_of "$parent/$PARENT_VERSION").json"
+      parent=""; parent_version=""; fp="$fp_base"
+      err="$(upload_sbom "$sbom" "$project" "$version" "$uuid" "$tags")" || {
+        record_failure "$key" "$identity" "upload failed: $err"
+        return 1
+      }
+    else
+      record_failure "$key" "$identity" "upload failed: $err"
+      return 1
+    fi
   fi
 
   jq -n --arg p "$project" --arg v "$version" --arg id "$image_id" --arg fp "$fp" \
@@ -145,7 +205,7 @@ process_target() { # target-json
         '{project:$p, version:$v, image_id:$id, fingerprint:$fp, project_uuid:$u, uploaded_at:$ts, sbom_sha256:$sha, quality:$q}' \
         > "$marker.tmp" && mv "$marker.tmp" "$marker" || return 1
   rm -f "$STATE/failures/$key"
-  log INFO "uploaded $project @ $version"
+  log INFO "uploaded $project @ $version${parent:+ (parent $parent)}"
 }
 
 gc_sboms() { # remove SBOMs no marker references anymore

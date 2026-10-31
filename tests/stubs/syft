@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Stub syft: copies $STUB_SYFT_SBOM to the -o cyclonedx-json=<path> target; logs one line per scan to $STUB_SYFT_LOG.
+out=""
+for a in "$@"; do case "$a" in cyclonedx-json=*) out="${a#cyclonedx-json=}";; esac; done
+echo "$*" >> "$STUB_SYFT_LOG"
+[[ -n ${STUB_SYFT_FAIL:-} ]] && { echo "syft failed" >&2; exit 1; }
+cp "$STUB_SYFT_SBOM" "$out"

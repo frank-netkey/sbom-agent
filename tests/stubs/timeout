@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Stub: drop the duration, run the command.
+shift
+exec "$@"

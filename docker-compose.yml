@@ -7,7 +7,7 @@ services:
   # read-only container/image endpoints, so a compromised scanner cannot create
   # containers, exec, or mount the host filesystem.
   docker-proxy:
-    image: tecnativa/docker-socket-proxy:0.3.0
+    image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
     restart: unless-stopped
     environment:
       CONTAINERS: "1"   # GET /containers/*  (ls, inspect)
@@ -54,6 +54,8 @@ services:
       DEFAULT_TAGS: ${DEFAULT_TAGS:-}
       SBOM_AUTHOR: ${SBOM_AUTHOR:-}
       QUALITY_MIN_PURL_PCT: ${QUALITY_MIN_PURL_PCT:-80}
+      DTRACK_PARENTS: ${DTRACK_PARENTS:-true}
+      PARENT_VERSION: ${PARENT_VERSION:-current}
       GOMEMLIMIT: 1200MiB          # keep Go's GC under the container limit
     user: "10001:10001"
     read_only: true
