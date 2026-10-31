@@ -22,12 +22,6 @@ Detailed plan for the health check and the Coolify template: see [PLAN.md](PLAN.
 - [ ] Optional: bump Syft (pinned v1.14.0, latest v1.55.0), Docker CLI (27.3.1 -> 29.9.2) and Alpine (3.20.3 -> 3.24.3); retest after.
 - [ ] Optional: `docker events` trigger for faster scans after deployments.
 
-- [ ] Optional: **DefectDojo** as a layer on top of Dependency-Track, only worth it once there are more finding sources than
-      SBOMs (e.g. Trivy, ZAP/DAST, SAST, pentest reports) or a need for SLA tracking, Jira tickets and management reports.
-      DT 4.x has a built-in DefectDojo integration (pushes findings per project to an engagement); check it still exists in
-      DT 5.2. Cost: another stack to run (Django + Postgres + Redis/Celery). Deploy via Coolify, decide per-project mapping
-      (DT project -> DefectDojo product/engagement), and keep audit decisions in one place to avoid double triage.
-
 ## Done
 
 - [x] Stable identities across redeploys (deploy timestamps stripped) and parent/child projects per Coolify resource.
