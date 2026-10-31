@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Shared config + helpers. Sourced by entrypoint.sh and reconcile.sh.
+# Config variables are used by the scripts that source this file.
+# shellcheck disable=SC2034
 
 STATE="${STATE_DIR:-/state}"
 HOST_ID="${HOST_ID:?HOST_ID is required (e.g. docker-host-01)}"
